@@ -2,19 +2,20 @@ import torch
 import torch.nn as nn
 import math
 
-def positional_encoding(seq_len, dmodel):
-    pe = torch.zeros((seq_len, dmodel), dtype=torch.float32)
+# GPT-2 uses learned positional encodings
+# def positional_encoding(seq_len, dmodel):
+#     pe = torch.zeros((seq_len, dmodel), dtype=torch.float32)
 
-    pos = torch.arange(0, seq_len).unsqueeze(1)
-    i = torch.arange(0, dmodel, 2)
-    div_term = torch.exp(-i * math.log(10000) / dmodel)
+#     pos = torch.arange(0, seq_len).unsqueeze(1)
+#     i = torch.arange(0, dmodel, 2)
+#     div_term = torch.exp(-i * math.log(10000) / dmodel)
 
-    angles = pos * div_term
+#     angles = pos * div_term
 
-    pe[:, 0::2] = torch.sin(angles)
-    pe[:, 1::2] = torch.cos(angles)
+#     pe[:, 0::2] = torch.sin(angles)
+#     pe[:, 1::2] = torch.cos(angles)
 
-    return pe
+#     return pe
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, dmodel, num_heads, masked=False):
@@ -60,66 +61,37 @@ class TransformerLayer(nn.Module):
     def __init__(self, dmodel, numheads, causal=False, cross_attention=False):
         super().__init__()
         self.self_attention = MultiHeadAttention(dmodel, numheads, causal) 
-        self.cross_attention = MultiHeadAttention(dmodel, numheads) if cross_attention else None
 
         self.ff1 = nn.Linear(dmodel, dmodel * 4)
         self.ff2 = nn.Linear(dmodel * 4, dmodel)
 
         self.layernorm1 = nn.LayerNorm(dmodel)
         self.layernorm2 = nn.LayerNorm(dmodel)
-        self.layernorm3 = nn.LayerNorm(dmodel) if cross_attention else None
 
-    def forward(self, x, context=None):
-        x = self.layernorm1(x + self.self_attention(x))
-        if self.cross_attention is not None and context is not None:
-            x = self.layernorm2(x + self.cross_attention(x, context))
-            x = self.layernorm3(x + self.ff2(torch.relu(self.ff1(x))))
-        else:
-            x = self.layernorm2(x + self.ff2(torch.relu(self.ff1(x))))
-        return x
-
-class TransformerEncoder(nn.Module):
-    def __init__(self, vocab_size, seq_len, dmodel, num_heads, num_layers):
-        super().__init__() 
-        self.embedding = nn.Embedding(vocab_size, dmodel)
-        self.seq_len = seq_len
-        self.dmodel = dmodel
-
-        self.layers = nn.ModuleList()
-
-        for i in range(num_layers):
-            self.layers.append(TransformerLayer(dmodel, num_heads))
-    
     def forward(self, x):
-        T = x.shape[1]
-        x = self.embedding(x)
-        x = x + positional_encoding(T, self.dmodel).to(x.device)
-
-        for layer in self.layers:
-            x = layer(x)
-
+        x = x + self.self_attention(self.layernorm1(x))
+        x = x + self.ff2(torch.nn.functional.gelu(self.ff1(self.layernorm2(x))))
         return x
-
-
 
 class TransformerDecoder(nn.Module):
-    def __init__(self, vocab_size, seq_len, dmodel, num_heads, num_layers):
+    def __init__(self, vocab_size, max_seq_len, seq_len, dmodel, num_heads, num_layers):
         super().__init__() 
         self.embedding = nn.Embedding(vocab_size, dmodel)
+        self.positional_embedding = nn.Embedding(max_seq_len, dmodel)
         self.seq_len = seq_len
         self.dmodel = dmodel
 
         self.layers = nn.ModuleList()
 
         for i in range(num_layers):
-            self.layers.append(TransformerLayer(dmodel, num_heads, True, True))
+            self.layers.append(TransformerLayer(dmodel, num_heads, True))
         
         self.end_linear = nn.Linear(dmodel, vocab_size)
     
     def forward(self, x, encoder_output):
         T = x.shape[1]
         x = self.embedding(x)
-        x = x + positional_encoding(T, self.dmodel).to(x.device)
+        x = x + self.positional_embedding(torch.arange(0, T, device=x.device))
 
         for layer in self.layers:
             x = layer(x, context=encoder_output)
@@ -131,12 +103,8 @@ class TransformerDecoder(nn.Module):
 class Transformer(nn.Module):
     def __init__(self, vocab_size, seq_len, dmodel, num_heads, num_layers):
         super().__init__()
-        self.encoder = TransformerEncoder(vocab_size, seq_len, dmodel, num_heads, num_layers)
         self.decoder = TransformerDecoder(vocab_size, seq_len, dmodel, num_heads, num_layers)
 
-    def forward(self, src, tgt):
-        encoder_output = self.encoder(src)
-        return self.decoder(tgt, encoder_output)
+    def forward(self, x):
+        return self.decoder(x)
 
-if __name__ == "__main__":
-    pass
