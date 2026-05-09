@@ -57,31 +57,86 @@ class MultiHeadAttention(nn.Module):
         return self.W_O(out)
 
 class TransformerLayer(nn.Module):
-    def __init__(self, seq_len, dmodel, numheads):
+    def __init__(self, dmodel, numheads, causal=False, cross_attention=False):
         super().__init__()
-        self.attention = MultiHeadAttention(dmodel, numheads) 
+        self.self_attention = MultiHeadAttention(dmodel, numheads, causal) 
+        self.cross_attention = MultiHeadAttention(dmodel, numheads) if cross_attention else None
 
         self.ff1 = nn.Linear(dmodel, dmodel * 4)
         self.ff2 = nn.Linear(dmodel * 4, dmodel)
 
         self.layernorm1 = nn.LayerNorm(dmodel)
         self.layernorm2 = nn.LayerNorm(dmodel)
+        self.layernorm3 = nn.LayerNorm(dmodel) if cross_attention else None
 
-    def forward(self, x):
-        x = self.layernorm1(x + self.attention(x))
-        x = self.layernorm2(x + self.ff2(torch.relu(self.ff1(x))))
+    def forward(self, x, context=None):
+        x = self.layernorm1(x + self.self_attention(x))
+        if self.cross_attention is not None and context is not None:
+            x = self.layernorm2(x + self.cross_attention(x, context))
+            x = self.layernorm3(x + self.ff2(torch.relu(self.ff1(x))))
+        else:
+            x = self.layernorm2(x + self.ff2(torch.relu(self.ff1(x))))
         return x
 
-class Encoder(nn.Module):
-    pass
+class TransformerEncoder(nn.Module):
+    def __init__(self, vocab_size, seq_len, dmodel, num_heads, num_layers):
+        super().__init__() 
+        self.embedding = nn.Embedding(vocab_size, dmodel)
+        self.seq_len = seq_len
+        self.dmodel = dmodel
 
-class Decoder(nn.Module):
-    pass
+        self.layers = nn.ModuleList()
 
+        for i in range(num_layers):
+            self.layers.append(TransformerLayer(dmodel, num_heads))
+    
+    def forward(self, x):
+        T = x.shape[1]
+        x = self.embedding(x)
+        x = x + positional_encoding(T, self.dmodel).to(x.device)
+
+        for layer in self.layers:
+            x = layer(x)
+
+        return x
+
+
+
+class TransformerDecoder(nn.Module):
+    def __init__(self, vocab_size, seq_len, dmodel, num_heads, num_layers):
+        super().__init__() 
+        self.embedding = nn.Embedding(vocab_size, dmodel)
+        self.seq_len = seq_len
+        self.dmodel = dmodel
+
+        self.layers = nn.ModuleList()
+
+        for i in range(num_layers):
+            self.layers.append(TransformerLayer(dmodel, num_heads, True, True))
+        
+        self.end_linear = nn.Linear(dmodel, vocab_size)
+    
+    def forward(self, x, encoder_output):
+        T = x.shape[1]
+        x = self.embedding(x)
+        x = x + positional_encoding(T, self.dmodel).to(x.device)
+
+        for layer in self.layers:
+            x = layer(x, context=encoder_output)
+
+        x = self.end_linear(x)
+
+        return x
+    
 class Transformer(nn.Module):
-    pass
+    def __init__(self, vocab_size, seq_len, dmodel, num_heads, num_layers):
+        super().__init__()
+        self.encoder = TransformerEncoder(vocab_size, seq_len, dmodel, num_heads, num_layers)
+        self.decoder = TransformerDecoder(vocab_size, seq_len, dmodel, num_heads, num_layers)
 
-
+    def forward(self, src, tgt):
+        encoder_output = self.encoder(src)
+        return self.decoder(tgt, encoder_output)
 
 if __name__ == "__main__":
     pass
