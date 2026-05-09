@@ -74,10 +74,10 @@ class TransformerLayer(nn.Module):
         return x
 
 class TransformerDecoder(nn.Module):
-    def __init__(self, vocab_size, max_seq_len, seq_len, dmodel, num_heads, num_layers):
-        super().__init__() 
+    def __init__(self, vocab_size, seq_len, dmodel, num_heads, num_layers):
+        super().__init__()
         self.embedding = nn.Embedding(vocab_size, dmodel)
-        self.positional_embedding = nn.Embedding(max_seq_len, dmodel)
+        self.positional_embedding = nn.Embedding(seq_len, dmodel)
         self.seq_len = seq_len
         self.dmodel = dmodel
 
@@ -88,13 +88,13 @@ class TransformerDecoder(nn.Module):
         
         self.end_linear = nn.Linear(dmodel, vocab_size)
     
-    def forward(self, x, encoder_output):
+    def forward(self, x):
         T = x.shape[1]
         x = self.embedding(x)
         x = x + self.positional_embedding(torch.arange(0, T, device=x.device))
 
         for layer in self.layers:
-            x = layer(x, context=encoder_output)
+            x = layer(x)
 
         x = self.end_linear(x)
 
