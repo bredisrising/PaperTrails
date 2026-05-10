@@ -1,5 +1,6 @@
 import time
 import math
+import tiktoken
 import torch
 import pickle
 from torch.utils.data.dataloader import DataLoader
