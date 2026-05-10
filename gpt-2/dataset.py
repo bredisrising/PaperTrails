@@ -7,7 +7,7 @@ class WebtextDataset(Dataset):
         self.path = path
         self.seq_len = seq_len
         self.virtual_len = virtual_len
-        self.data = np.memmap(path, dtype=np.int16, mode='r')
+        self.data = np.memmap(path, dtype=np.uint16, mode='r')
         self.max_start = len(self.data) - seq_len - 1
 
     def __len__(self):
