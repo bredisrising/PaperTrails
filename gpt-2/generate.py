@@ -1,13 +1,14 @@
 import math
+import time
 import tiktoken
 import torch
 import sys
 from transformer import Transformer
 
-DMODEL = 768
-LAYERS = 12
-NUMHEADS = 12
-MAX_SEQ_LEN = 1024
+DMODEL = 384
+LAYERS = 6
+NUMHEADS = 6
+MAX_SEQ_LEN = 512
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -31,7 +32,8 @@ vocab_size = enc.n_vocab
 
 
 
-text = "The president announced today that "
+text = '''The president announced today that'''
+
 tokens = enc.encode(text)
 
 model = Transformer(vocab_size, MAX_SEQ_LEN, DMODEL, NUMHEADS, LAYERS).to(device)
@@ -45,13 +47,15 @@ model.load_state_dict(sd)
 
 model.eval()
 
-temperature = .8
-top_k = 30
+temperature = 1.0
+top_k = 50
 
-print(text, end="", flush=True)
+
+printed_text = enc.decode(tokens)
+print(printed_text, end="", flush=True)
 
 while True:
-    tensor_tokens = torch.tensor(tokens).unsqueeze(0).to(device)
+    tensor_tokens = torch.tensor(tokens[-MAX_SEQ_LEN:]).unsqueeze(0).to(device)
     with torch.no_grad():
         logits = model(tensor_tokens)
         logits = logits[:, -1, :] / temperature
@@ -59,13 +63,18 @@ while True:
         logits[logits < v[:, [-1]]] = -float('inf')
         probs = torch.softmax(logits, dim=-1)
         next_tok = torch.multinomial(probs, num_samples=1).item()
-
-    if len(tokens) < MAX_SEQ_LEN:
-        tokens.append(next_tok)    
-    else:
-        tokens = tokens[1:]
-        tokens.append(next_tok)
-
-
-    print(enc.decode([next_tok]), end="", flush=True)
+    
+    #if len(tokens) < MAX_SEQ_LEN:
+    #    tokens.append(next_tok)
+    #else:
+    #    tokens = tokens[1:]
+   
+    tokens.append(next_tok)
+    
+    decoded = enc.decode(tokens)
+    new_text = decoded[len(printed_text):]
+       
+    print(new_text, end="", flush=True)
+    printed_text += new_text
+    time.sleep(.125)
 

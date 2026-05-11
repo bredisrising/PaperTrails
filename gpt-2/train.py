@@ -9,16 +9,16 @@ from dataset import WebtextDataset
 
 print("importing done.")
 
-EPOCHS = 10
-DMODEL = 768
-LAYERS = 12
-NUMHEADS = 12
-MAX_SEQ_LEN = 1024
-BATCH_SIZE = 16
-ACCUM_STEPS = 32  # effective batch ~= 524k tokens
-LR = 6e-4
+EPOCHS = 20
+DMODEL = 384
+LAYERS = 6
+NUMHEADS = 6
+MAX_SEQ_LEN = 512
+BATCH_SIZE = 32
+ACCUM_STEPS = 8 # effective batch ~= 524k tokens
+LR = 1e-3
 MIN_LR = 6e-5
-WARMUP = 2000
+WARMUP = 500 
 STEPS_PER_EPOCH = 2000
 NUM_WORKERS = 4
 GRAD_CLIP = 1.0
@@ -36,6 +36,12 @@ enc = tiktoken.get_encoding('gpt2')
 vocab_size = enc.n_vocab
 
 model = Transformer(vocab_size, MAX_SEQ_LEN, DMODEL, NUMHEADS, LAYERS).to(device)
+
+ckpt = torch.load('ckpt_2.pt', map_location=device)
+sd = ckpt['model'] if isinstance(ckpt, dict) and 'model' in ckpt else ckpt
+sd = {k.removeprefix('_orig_mod.'): v for k, v in sd.items()}
+model.load_state_dict(sd)
+
 model = torch.compile(model)
 
 loss_fn = torch.nn.CrossEntropyLoss()
@@ -85,7 +91,7 @@ print("=" * 60)
 
 
 global_step = 0
-for epoch in range(EPOCHS):
+for epoch in range(3, EPOCHS):
     epoch_start = time.time()
     running_loss = 0.0
     steps_done = 0
