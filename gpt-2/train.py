@@ -10,30 +10,55 @@ from dataset import WebtextDataset
 print("importing done.")
 
 EPOCHS = 10
-DMODEL = 384
-LAYERS = 6
-NUMHEADS = 6
-MAX_SEQ_LEN = 512
-BATCH_SIZE = 32
-LR = 2.5e-4
+DMODEL = 768
+LAYERS = 12
+NUMHEADS = 12
+MAX_SEQ_LEN = 1024
+BATCH_SIZE = 16
+ACCUM_STEPS = 32  # effective batch ~= 524k tokens
+LR = 6e-4
+MIN_LR = 6e-5
+WARMUP = 2000
 STEPS_PER_EPOCH = 2000
 NUM_WORKERS = 4
+GRAD_CLIP = 1.0
 
-PAD, SOS, EOS = 0, 1, 2
+# PAD, SOS, EOS = 0, 1, 2
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+torch.set_float32_matmul_precision('high')
 
-with open("vocab.pkl", "rb") as f:
-    vocab = pickle.load(f)
+# with open("vocab.pkl", "rb") as f:
+#     vocab = pickle.load(f)
 
-vocab_size = len(vocab["tokens"])
+
+enc = tiktoken.get_encoding('gpt2')
+vocab_size = enc.n_vocab
 
 model = Transformer(vocab_size, MAX_SEQ_LEN, DMODEL, NUMHEADS, LAYERS).to(device)
+model = torch.compile(model)
+
 loss_fn = torch.nn.CrossEntropyLoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+
+# wd only on 2d params
+decay = [p for p in model.parameters() if p.dim() >= 2]
+nodecay = [p for p in model.parameters() if p.dim() < 2]
+optimizer = torch.optim.AdamW(
+    [{"params": decay, "weight_decay": 0.1},
+     {"params": nodecay, "weight_decay": 0.0}],
+    lr=LR, betas=(0.9, 0.95), eps=1e-8,
+)
+
+# warmup then cosine to MIN_LR
+def get_lr(step):
+    if step < WARMUP:
+        return LR * (step + 1) / WARMUP
+    total = EPOCHS * STEPS_PER_EPOCH
+    progress = (step - WARMUP) / max(1, total - WARMUP)
+    return MIN_LR + 0.5 * (LR - MIN_LR) * (1 + math.cos(math.pi * progress))
 
 dataset = WebtextDataset("data.bin", MAX_SEQ_LEN)
-dataloader = DataLoader(dataset, BATCH_SIZE, num_workers=NUM_WORKERS, pin_memory=True)
+dataloader = DataLoader(dataset, BATCH_SIZE, num_workers=NUM_WORKERS, pin_memory=True, persistent_workers=True)
 
 n_params = sum(p.numel() for p in model.parameters())
 n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -59,35 +84,48 @@ print(f"steps per epoch:  {STEPS_PER_EPOCH:,}  (capped; full pass would be {len(
 print("=" * 60)
 
 
+global_step = 0
 for epoch in range(EPOCHS):
     epoch_start = time.time()
     running_loss = 0.0
     steps_done = 0
 
-    for i, (x, y) in enumerate(dataloader):
-        if i >= STEPS_PER_EPOCH:
-            break
-
-        x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-
-        logits = model(x)
-        # predict next token at every position: flatten (B,T,V) and (B,T)
-        loss = loss_fn(logits.reshape(-1, vocab_size), y.reshape(-1))
+    data_iter = iter(dataloader)
+    for i in range(STEPS_PER_EPOCH):
+        # set lr for this step
+        lr = get_lr(global_step)
+        for g in optimizer.param_groups:
+            g["lr"] = lr
 
         optimizer.zero_grad()
-        loss.backward()
+        loss_accum = 0.0
+        # accumulate ACCUM_STEPS micro batches then step
+        for micro in range(ACCUM_STEPS):
+            x, y = next(data_iter)
+            x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                logits = model(x)
+                # predict next token at every position: flatten (B,T,V) and (B,T)
+                loss = loss_fn(logits.reshape(-1, vocab_size), y.reshape(-1)) / ACCUM_STEPS
+            loss.backward()
+            loss_accum += loss.detach()
+
+        torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
         optimizer.step()
 
-        running_loss += loss.item()
+        loss_val = loss_accum.item()
+        running_loss += loss_val
         steps_done += 1
+        global_step += 1
 
         if i % 20 == 0:
             elapsed = time.time() - epoch_start
             steps_per_sec = (i + 1) / elapsed
             print(
                 f"epoch {epoch:>2} step {i:>5}/{STEPS_PER_EPOCH} "
-                f"loss {loss.item():.4f} ppl {math.exp(loss.item()):.2f} "
-                f"({steps_per_sec:.1f} it/s)",
+                f"loss {loss_val:.4f} ppl {math.exp(loss_val):.2f} "
+                f"lr {lr:.2e} ({steps_per_sec:.2f} it/s)",
                 flush=True,
             )
 
@@ -99,5 +137,9 @@ for epoch in range(EPOCHS):
         flush=True,
     )
 
-    torch.save(model.state_dict(), f"ckpt_{epoch}.pt")
+    torch.save({
+        'model': model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'step': global_step,
+    }, f"ckpt_{epoch}.pt")
     print(f"saved ckpt_{epoch}.pt\n", flush=True)

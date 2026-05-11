@@ -1,5 +1,6 @@
 import torch 
 import torch.nn as nn
+import torch.nn.functional as F
 import math
 
 # GPT-2 uses learned positional encodings
@@ -29,6 +30,7 @@ class MultiHeadAttention(nn.Module):
         self.W_K = nn.Linear(dmodel, dmodel)
         self.W_V = nn.Linear(dmodel, dmodel)
         self.W_O = nn.Linear(dmodel, dmodel)
+        self.W_O._is_residual_proj = True
 
     def forward(self, x, context=None):
         B, T, C = x.shape
@@ -43,17 +45,14 @@ class MultiHeadAttention(nn.Module):
         K = K.view(B, -1, self.num_heads, self.dk).transpose(1, 2)
         V = V.view(B, -1, self.num_heads, self.dk).transpose(1, 2)
 
-        scores = Q @ K.transpose(-2, -1) / (self.dk ** .5)
+        # scores = Q @ K.transpose(-2, -1) / (self.dk ** .5)
+        # # ts the part that is needed for self-attention 
+        # # so that tokens can't attend to future tokens
+        # if self.causal:
+        #     mask = torch.triu(torch.ones(T, T, device=x.device), diagonal=1).bool()
+        #     scores = scores.masked_fill(mask, float('-inf'))
 
-        # ts the part that is needed for self-attention 
-        # so that tokens can't attend to future tokens
-        if self.causal:
-            mask = torch.triu(torch.ones(T, T, device=x.device), diagonal=1).bool()
-            scores = scores.masked_fill(mask, float('-inf'))
-
-        weights = scores.softmax(dim=-1)
-        out = weights @ V
-
+        out = F.scaled_dot_product_attention(Q, K, V, is_causal=self.causal)
         out = out.transpose(1, 2).contiguous().view(B, T, -1)
         return self.W_O(out)
 
@@ -64,6 +63,7 @@ class TransformerLayer(nn.Module):
 
         self.ff1 = nn.Linear(dmodel, dmodel * 4)
         self.ff2 = nn.Linear(dmodel * 4, dmodel)
+        self.ff2._is_residual_proj = True
 
         self.layernorm1 = nn.LayerNorm(dmodel)
         self.layernorm2 = nn.LayerNorm(dmodel)
@@ -85,9 +85,29 @@ class TransformerDecoder(nn.Module):
 
         for i in range(num_layers):
             self.layers.append(TransformerLayer(dmodel, num_heads, True))
-        
+
+        self.ll_f = nn.LayerNorm(dmodel)
         self.end_linear = nn.Linear(dmodel, vocab_size)
-    
+
+        self.num_layers = num_layers
+        self.apply(self._init_weights)
+        # rule 2: rescale residual projections by 1/sqrt(2N)
+        residual_std = 0.02 / math.sqrt(2 * num_layers)
+        for m in self.modules():
+            if getattr(m, "_is_residual_proj", False):
+                nn.init.normal_(m.weight, mean=0.0, std=residual_std)
+           
+        self.end_linear.weight = self.embedding.weight
+
+    def _init_weights(self, module):
+        # rule 1: linears and embeddings ~ N(0, 0.02), biases zero
+        if isinstance(module, nn.Linear):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
     def forward(self, x):
         T = x.shape[1]
         x = self.embedding(x)
@@ -96,6 +116,7 @@ class TransformerDecoder(nn.Module):
         for layer in self.layers:
             x = layer(x)
 
+        x = self.ll_f(x)
         x = self.end_linear(x)
 
         return x
