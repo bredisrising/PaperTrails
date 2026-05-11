@@ -1,6 +1,5 @@
 *.pkl
 *.jsonl
-*.ipynb
 *.bin
 *.pt
 

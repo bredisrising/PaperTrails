@@ -1,0 +1,71 @@
+import math
+import tiktoken
+import torch
+import sys
+from transformer import Transformer
+
+DMODEL = 768
+LAYERS = 12
+NUMHEADS = 12
+MAX_SEQ_LEN = 1024
+
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+enc = tiktoken.get_encoding("gpt2")
+vocab_size = enc.n_vocab
+
+
+# claude generated this
+# the raw moodel wont be an assistant more like continuation model ideally - fingers crossed
+# prompts that play nice with openwebtext (news/blog/wiki style):
+#   "The president announced today that"
+#   "In a recent study, researchers found"
+#   "According to the report,"
+#   "BREAKING: "
+#   "The first thing you need to know about"
+#   "Posted by u/"                          # reddit-style, OWT was scraped from reddit links
+#   "Q: What is  A:"
+#   "def "                                  # OWT has a fair bit of code/tech blogs
+# avoid: chat-style ("hi how are you"), instructions, anything assuming a fine-tuned model
+
+
+
+text = "The president announced today that "
+tokens = enc.encode(text)
+
+model = Transformer(vocab_size, MAX_SEQ_LEN, DMODEL, NUMHEADS, LAYERS).to(device)
+
+# new ckpts are dicts w/ 'model' key, old ones are bare state_dicts
+ckpt = torch.load(sys.argv[1], map_location=device)
+sd = ckpt['model'] if isinstance(ckpt, dict) and 'model' in ckpt else ckpt
+# strip torch.compile prefix
+sd = {k.removeprefix('_orig_mod.'): v for k, v in sd.items()}
+model.load_state_dict(sd)
+
+model.eval()
+
+temperature = .8
+top_k = 30
+
+print(text, end="", flush=True)
+
+while True:
+    tensor_tokens = torch.tensor(tokens).unsqueeze(0).to(device)
+    with torch.no_grad():
+        logits = model(tensor_tokens)
+        logits = logits[:, -1, :] / temperature
+        v, _ = torch.topk(logits, top_k)
+        logits[logits < v[:, [-1]]] = -float('inf')
+        probs = torch.softmax(logits, dim=-1)
+        next_tok = torch.multinomial(probs, num_samples=1).item()
+
+    if len(tokens) < MAX_SEQ_LEN:
+        tokens.append(next_tok)    
+    else:
+        tokens = tokens[1:]
+        tokens.append(next_tok)
+
+
+    print(enc.decode([next_tok]), end="", flush=True)
+
