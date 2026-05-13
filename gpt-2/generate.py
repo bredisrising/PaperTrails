@@ -5,10 +5,10 @@ import torch
 import sys
 from transformer import Transformer
 
-DMODEL = 384
-LAYERS = 6
-NUMHEADS = 6
-MAX_SEQ_LEN = 512
+DMODEL = 1024
+LAYERS = 24
+NUMHEADS = 16
+MAX_SEQ_LEN = 1024
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -32,7 +32,7 @@ vocab_size = enc.n_vocab
 
 
 
-text = '''The president announced today that'''
+text = '''BREAKING:'''
 
 tokens = enc.encode(text)
 
@@ -47,8 +47,8 @@ model.load_state_dict(sd)
 
 model.eval()
 
-temperature = 1.0
-top_k = 50
+temperature = .95
+top_k = 45
 
 
 printed_text = enc.decode(tokens)
@@ -76,5 +76,5 @@ while True:
        
     print(new_text, end="", flush=True)
     printed_text += new_text
-    time.sleep(.125)
+    #time.sleep()
 

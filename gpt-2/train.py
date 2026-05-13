@@ -9,18 +9,18 @@ from dataset import WebtextDataset
 
 print("importing done.")
 
-EPOCHS = 20
-DMODEL = 384
-LAYERS = 6
-NUMHEADS = 6
-MAX_SEQ_LEN = 512
-BATCH_SIZE = 32
-ACCUM_STEPS = 8 # effective batch ~= 524k tokens
-LR = 1e-3
-MIN_LR = 6e-5
-WARMUP = 500 
-STEPS_PER_EPOCH = 2000
-NUM_WORKERS = 4
+EPOCHS = 2
+DMODEL = 1024
+LAYERS = 24
+NUMHEADS = 16
+MAX_SEQ_LEN = 1024
+BATCH_SIZE = 4
+ACCUM_STEPS = 16 # effective batch ~= 524k tokens
+LR = 3e-4
+MIN_LR = 3e-5
+WARMUP = 2000 
+STEPS_PER_EPOCH = 106700 
+NUM_WORKERS = 2
 GRAD_CLIP = 1.0
 
 # PAD, SOS, EOS = 0, 1, 2
@@ -37,10 +37,10 @@ vocab_size = enc.n_vocab
 
 model = Transformer(vocab_size, MAX_SEQ_LEN, DMODEL, NUMHEADS, LAYERS).to(device)
 
-ckpt = torch.load('ckpt_2.pt', map_location=device)
-sd = ckpt['model'] if isinstance(ckpt, dict) and 'model' in ckpt else ckpt
-sd = {k.removeprefix('_orig_mod.'): v for k, v in sd.items()}
-model.load_state_dict(sd)
+#ckpt = torch.load('ckpt_17.pt', map_location=device)
+#sd = ckpt['model'] if isinstance(ckpt, dict) and 'model' in ckpt else ckpt
+#sd = {k.removeprefix('_orig_mod.'): v for k, v in sd.items()}
+#model.load_state_dict(sd)
 
 model = torch.compile(model)
 
@@ -63,7 +63,7 @@ def get_lr(step):
     progress = (step - WARMUP) / max(1, total - WARMUP)
     return MIN_LR + 0.5 * (LR - MIN_LR) * (1 + math.cos(math.pi * progress))
 
-dataset = WebtextDataset("data.bin", MAX_SEQ_LEN)
+dataset = WebtextDataset("data.bin", MAX_SEQ_LEN, STEPS_PER_EPOCH * ACCUM_STEPS * BATCH_SIZE)
 dataloader = DataLoader(dataset, BATCH_SIZE, num_workers=NUM_WORKERS, pin_memory=True, persistent_workers=True)
 
 n_params = sum(p.numel() for p in model.parameters())
@@ -91,7 +91,7 @@ print("=" * 60)
 
 
 global_step = 0
-for epoch in range(3, EPOCHS):
+for epoch in range(0, EPOCHS):
     epoch_start = time.time()
     running_loss = 0.0
     steps_done = 0
