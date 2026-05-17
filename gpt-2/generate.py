@@ -31,8 +31,7 @@ vocab_size = enc.n_vocab
 # avoid: chat-style ("hi how are you"), instructions, anything assuming a fine-tuned model
 
 
-
-text = '''BREAKING:'''
+text = sys.argv[2]
 
 tokens = enc.encode(text)
 
@@ -47,8 +46,8 @@ model.load_state_dict(sd)
 
 model.eval()
 
-temperature = .95
-top_k = 45
+temperature = .8
+top_k = 50
 
 
 printed_text = enc.decode(tokens)
