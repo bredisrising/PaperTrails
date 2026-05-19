@@ -7,11 +7,13 @@ class Downsample(nn.Module):
         super().__init__()
         self.model = nn.Sequential(
             nn.Conv2d(input_channels, output_channels, 3, 1, 1),
+            nn.GroupNorm(8, output_channels),
             nn.LeakyReLU(),
             nn.Conv2d(output_channels, output_channels, 3, 1, 1),
+            nn.GroupNorm(8, output_channels),
             nn.LeakyReLU(),
 
-        ) 
+        )
         # downsample
         self.down = nn.MaxPool2d(2, 2)
 
@@ -28,10 +30,12 @@ class Upsample(nn.Module):
         self.upsample = nn.ConvTranspose2d(input_channels, input_channels // 2, 2, 2)
         self.model = nn.Sequential(
             nn.Conv2d(input_channels, output_channels, 3, 1, 1),
+            nn.GroupNorm(8, output_channels),
             nn.LeakyReLU(),
             nn.Conv2d(output_channels, output_channels, 3, 1, 1),
+            nn.GroupNorm(8, output_channels),
             nn.LeakyReLU(),
-        ) 
+        )
     
     def forward(self, x, skipped):
         x = self.upsample(x)
@@ -42,15 +46,20 @@ class Upsample(nn.Module):
 
 
 class UNet(nn.Module):
-    def __init__(self, layers=3):
+    def __init__(self, layers=3, img_size=32):
         super().__init__()
         self.layers = layers
+        self.img_size = img_size
+
+        self.t_projection = nn.Linear(1, img_size * img_size)
 
         self.channels = 64 
         self.initial = nn.Sequential(
-            nn.Conv2d(3, self.channels, 3, 1, 1),
+            nn.Conv2d(4, self.channels, 3, 1, 1),
+            nn.GroupNorm(8, self.channels),
             nn.LeakyReLU(),
             nn.Conv2d(self.channels, self.channels, 3, 1, 1),
+            nn.GroupNorm(8, self.channels),
             nn.LeakyReLU(),
         )
 
@@ -61,8 +70,10 @@ class UNet(nn.Module):
 
         self.double_channel = nn.Sequential(
             nn.Conv2d(self.channels, self.channels * 2, 3, 1, 1),
+            nn.GroupNorm(8, self.channels * 2),
             nn.LeakyReLU(),
             nn.Conv2d(self.channels * 2, self.channels * 2, 3, 1, 1),
+            nn.GroupNorm(8, self.channels * 2),
             nn.LeakyReLU(),
         )
 
@@ -74,10 +85,16 @@ class UNet(nn.Module):
             self.channels //= 2
 
 
-        self.end = nn.Conv2d(self.channels, 3, 3, 1, 1)
+        self.end = nn.Sequential(
+            nn.Conv2d(self.channels, 3, 3, 1, 1),
+            # nn.Tanh(),
+        )
 
-    def forward(self, x):
-        init = self.initial(x)
+    def forward(self, x, t):
+        # t = self.t_projection(t).view(-1, 1, self.img_size, self.img_size)
+        t = t.expand(-1, 1, self.img_size, self.img_size)
+        init = torch.cat([x, t], dim=1)
+        init = self.initial(init)
         x = init
         skips = []
         for downsample in self.downsamples:
