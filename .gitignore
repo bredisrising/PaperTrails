@@ -3,6 +3,7 @@
 *.bin
 *.pt
 *.codex
+*.ipynb
 data/
 
 # Byte-compiled / optimized / DLL files
