@@ -1,3 +1,10 @@
+ROADMAP.md
+.clangd
+vscode
+*.pdf
+a.out
+results
+
 *.pkl
 *.jsonl
 *.bin
